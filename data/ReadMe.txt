@@ -1,5 +1,6 @@
 The "Instances_Alg" folder includes the instances used for algorithm evaluation.
 The "Instances_Het_Case" folder includes the instances used for heterogeneity analysis and case study.
+The "Results" folder includes the detailed results for model considering drone deployment.
 
 Data description
 CUST_NO : index of nodes     
