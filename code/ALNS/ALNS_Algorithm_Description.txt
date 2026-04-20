@@ -1,0 +1,598 @@
+
+============================================================
+ALNS for the Location Routing Problem (LRP)
+============================================================
+
+Author note
+------------------------------------------------------------
+This project implements an Adaptive Large Neighborhood Search (ALNS)
+framework proposed by the paper[1] published in  European Journal of
+Operational Research (EJOR) for a class of Location Routing Problem (LRP)
+benchmark instances. The code is designed to run in IntelliJ IDEA and supports
+multiple benchmark file formats through dedicated instance readers.
+
+[1]Rave, A., & Fontaine, P. (2025). The location routing problem with time windows and load-dependent travel times for cargo bikes. European Journal of Operational Research, 323(1), 97-107.
+
+
+
+The algorithmic structure follows the ALNS idea discussed earlier in
+paper[1] :
+- destroy operators
+- adaptive facility / fleet adjustment
+- repair operators
+- local search
+- adaptive operator weights
+- optional infeasible intermediate solutions with penalty handling
+
+The codebase has been adapted so that all supported benchmark formats
+are converted into the same internal data structure: LRPInstance.
+
+This README explains:
+1. required environment
+2. project structure
+3. meaning of each class
+4. how to configure files and folders
+5. how to run one instance
+6. how to run batch experiments
+7. how CSV outputs are generated
+8. how the supported benchmark families are handled
+9. important implementation notes
+
+
+============================================================
+1. REQUIRED ENVIRONMENT
+============================================================
+
+Recommended environment
+------------------------------------------------------------
+- Operating System:
+  macOS / Windows / Linux
+
+- Java:
+  JDK 17 or newer is recommended
+  (the project has been used in IntelliJ IDEA with recent OpenJDK)
+
+- IDE:
+  IntelliJ IDEA
+
+- External libraries:
+  None are required for the current CSV-based experiment output.
+
+
+============================================================
+2. PROJECT PURPOSE
+============================================================
+
+The project solves LRP instances with the following main decisions:
+- which facilities (depots) are opened
+- how many vehicle routes are used
+- which customers are assigned to which facility
+- in which order customers are visited on each route
+
+The algorithm is heuristic. It is not an exact solver.
+
+Main design goals
+------------------------------------------------------------
+- keep one unified internal instance structure
+- support several benchmark input formats
+- avoid changing the ALNS core when switching benchmark families
+- allow single-instance runs
+- allow multi-instance batch experiments
+- record objective values, feasibility, and runtime
+
+
+============================================================
+3. INTERNAL DATA MODEL
+============================================================
+
+All instance formats are converted to the following core structure:
+
+LRPInstance
+------------------------------------------------------------
+This is the unified internal representation used everywhere else in the
+project. All supported file readers must return an LRPInstance object.
+
+It contains:
+- number of customers
+- number of candidate facilities
+- vehicle capacity
+- vehicle fixed cost
+- distance cost factor
+- lower bound
+- upper bound
+- distance mode
+- customer list
+- facility list
+
+Customers are always indexed as:
+- 1 ... customerCount
+
+Facilities are always indexed as:
+- customerCount + 1 ... customerCount + facilityCount
+
+This indexing convention is important because several other classes
+assume it.
+
+
+============================================================
+4. CLASS OVERVIEW
+============================================================
+
+Below is the role of the most important classes.
+
+4.1 Core data classes
+------------------------------------------------------------
+
+Node
+- abstract base class
+- stores:
+  - id
+  - x coordinate
+  - y coordinate
+
+Customer
+- extends Node
+- stores:
+  - demand
+
+Facility
+- extends Node
+- stores:
+  - opening cost
+  - capacity
+  - maxVehicles
+
+LRPInstance
+- unified instance container
+- stores all data needed by the algorithm
+
+Route
+- represents one vehicle route
+- stores:
+  - facility id from which the route starts and ends
+  - ordered list of customer ids
+
+Solution
+- represents one complete solution
+- stores:
+  - list of routes
+  - objectiveValue
+  - penalizedObjectiveValue
+
+RemovalResult
+- stores the result of a destroy step
+- contains:
+  - partial solution
+  - removed customers
+
+
+4.2 Distance-related classes
+------------------------------------------------------------
+
+DistanceMode
+- enumeration describing how pairwise distances are computed
+- current project variants include:
+  - EUCLIDEAN
+  - CEIL_EUCLIDEAN
+  - ROUND_EUCLIDEAN
+  - TRUNCATED_EUCLIDEAN_X100
+  - any other mode you added for testing, such as a ceil(100*d) version
+
+DistanceCalculator
+- computes the distance between two nodes according to the
+  distance mode stored in the LRPInstance
+
+Important note:
+The benchmark families do NOT all use exactly the same distance rule.
+Therefore the readers and distance mode must be matched carefully.
+
+
+4.3 Evaluation and printing
+------------------------------------------------------------
+
+SolutionEvaluator
+- computes:
+  - raw objective value
+  - penalized objective value
+- handles penalties for:
+  - vehicle capacity violation
+  - facility capacity violation
+  - missing customers
+  - duplicate customers
+- also contains:
+  - routeTravelCost(...)
+  - insertionDelta(...)
+  - isFeasible(...)
+
+SolutionPrinter
+- prints a human-readable summary of the final solution
+
+
+4.4 ALNS parameter and helper classes
+------------------------------------------------------------
+
+ALNSParameters
+- stores all algorithmic parameters, such as:
+  - random seed
+  - max iterations
+  - no-improvement limit
+  - reaction factor
+  - noise interval
+  - rewards for adaptive weights
+  - temperature / cooling rate
+  - local search threshold
+
+OperatorScore
+- stores adaptive weights for operators
+- updated during the search
+
+DestroyType
+- enumeration for destroy operators
+  - RANDOM_REMOVAL
+  - SEQUENCE_REMOVAL
+
+RepairType
+- enumeration for repair operators
+  - GREEDY_INSERTION
+  - GREEDY_INSERTION_WITH_NOISE
+
+InsertionMove
+- helper object storing one candidate insertion:
+  - route index
+  - insertion position
+  - delta cost
+
+
+4.5 Solver
+------------------------------------------------------------
+
+ALNSSolver
+- the main heuristic engine
+- responsibilities include:
+  - building the initial solution
+  - selecting destroy / repair operators
+  - applying destroy
+  - applying adaptive facility procedure
+  - applying repair
+  - evaluating solutions
+  - local search
+  - acceptance criterion
+  - updating operator weights
+  - optionally tracking feasible best solution
+  - returning a final solution
+
+Main
+- convenient entry point for a single-instance experiment
+- can be used for:
+  - quick testing
+  - debugging
+  - running one instance five times
+  - printing best and average performance
+
+BatchExperimentRunner
+- batch experiment entry point
+- recursively scans the instance folders
+- runs each instance multiple times
+- exports summary and detail CSV files
+
+InstanceLoader
+- the unified entry point for loading any supported instance family
+- dispatches to the correct reader based on the chosen family name
+
+
+4.6 Reader classes
+------------------------------------------------------------
+
+F1Reader
+F2Reader
+F3Reader
+F4Reader
+F5Reader
+
+These classes read benchmark files of different external formats and
+convert them into one common LRPInstance object.
+
+This is a key design decision:
+the ALNS solver should not need to know the original file format.
+
+InstanceReader
+- keeps the original reader logic for the classical F3-style format
+- can still be useful internally
+- F3Reader typically delegates to this reader
+
+
+============================================================
+5. SUPPORTED BENCHMARK FAMILIES
+============================================================
+
+The project currently supports five benchmark families.
+
+Important:
+Even if two families have the same textual field order, their distance
+interpretation may still need to be verified.
+
+F1
+------------------------------------------------------------
+Block-style format:
+- number of customers
+- number of depots
+- depot coordinates
+- customer coordinates
+- vehicle capacity
+- depot capacities
+- customer demands
+- depot opening costs
+- vehicle fixed cost
+- distance code
+
+F2
+------------------------------------------------------------
+Same overall block structure as F1, but this family required special
+attention because the practical distance rule had to be checked against
+known optimal values.
+
+If your experiments showed that F2 only matches benchmark references
+when using:
+  ceil(100 * Euclidean distance)
+or any other specific rule,
+then the corresponding distance mode in DistanceCalculator must be
+set exactly that way.
+
+F3
+------------------------------------------------------------
+Classical format:
+  #J #I Q g v
+  LB UB ic
+  customer lines
+  facility lines
+
+This is the family originally handled by the first reader.
+
+F4
+------------------------------------------------------------
+Same block structure as F1.
+
+F5
+------------------------------------------------------------
+Same block structure as F1.
+
+
+============================================================
+6. DISTANCE CALCULATION
+============================================================
+
+This is one of the most important implementation details.
+
+The solver quality can be completely wrong if the distance rule does
+not match the benchmark definition.
+
+General principle
+------------------------------------------------------------
+Distances are computed per edge, not after summing the total route
+length.
+
+That means for each pair of nodes (A, B), the edge cost is first
+computed according to the chosen distance rule, and then route cost
+is the sum of edge costs.
+
+Examples of possible rules
+------------------------------------------------------------
+1. Euclidean:
+   d = sqrt((xA-xB)^2 + (yA-yB)^2)
+
+2. Ceil Euclidean:
+   d = ceil(sqrt((xA-xB)^2 + (yA-yB)^2))
+
+3. Rounded Euclidean:
+   d = round(sqrt((xA-xB)^2 + (yA-yB)^2))
+
+4. Truncated after multiplying by 100:
+   d = floor(100 * sqrt((xA-xB)^2 + (yA-yB)^2))
+
+5. Ceil after multiplying by 100:
+   d = ceil(100 * sqrt((xA-xB)^2 + (yA-yB)^2))
+
+Important warning
+------------------------------------------------------------
+Do NOT assume that two benchmark families with similar format files
+use the same distance rounding rule.
+
+If one family produces suspiciously "too good" results, the first thing
+to verify is the distance mode.
+
+
+============================================================
+7. EXPECTED PROJECT FOLDER STRUCTURE
+============================================================
+
+A recommended structure is:
+
+Project1/
+├── src/
+│   └── test1/
+│       └── LRP_ALNS_Basline/
+│           ├── ALNSParameters.java
+│           ├── ALNSSolver.java
+│           ├── BatchExperimentRunner.java
+│           ├── Customer.java
+│           ├── DestroyType.java
+│           ├── DistanceCalculator.java
+│           ├── DistanceMode.java
+│           ├── F1Reader.java
+│           ├── F2Reader.java
+│           ├── F3Reader.java
+│           ├── F4Reader.java
+│           ├── F5Reader.java
+│           ├── Facility.java
+│           ├── InsertionMove.java
+│           ├── InstanceLoader.java
+│           ├── InstanceReader.java
+│           ├── LRPInstance.java
+│           ├── Main.java
+│           ├── Node.java
+│           ├── OperatorScore.java
+│           ├── RemovalResult.java
+│           ├── RepairType.java
+│           ├── Route.java
+│           ├── Solution.java
+│           ├── SolutionEvaluator.java
+│           └── SolutionPrinter.java
+│
+└── LRPInstances/
+    ├── instances-F1/
+    ├── instances-F2/
+    ├── instances-F3/
+    ├── instances-F4/
+    └── instances-F5/
+
+Recommended naming
+------------------------------------------------------------
+Place all instance files under the five folders above. This makes it
+possible for BatchExperimentRunner to infer the instance family from
+the folder path.
+
+
+============================================================
+8. HOW TO RUN A SINGLE INSTANCE
+============================================================
+
+Use Main.java.
+
+Typical workflow
+------------------------------------------------------------
+1. Open Main.java
+2. Set:
+   - instanceType
+   - instancePath
+3. Run the class in IntelliJ IDEA
+
+Example
+------------------------------------------------------------
+String instanceType = "F3";
+String instancePath = "/Users/yourname/IdeaProjects/Project1/LRPInstances/instances-F3/r30x5a-2";
+
+Then:
+- the instance is read
+- the solver is built
+- the algorithm runs
+- the final solution is printed
+
+If Main is currently set up to run multiple repetitions, it may also
+report:
+- best objective
+- average objective
+- average runtime
+- best seed
+
+
+============================================================
+9. HOW TO RUN BATCH EXPERIMENTS
+============================================================
+
+Use BatchExperimentRunner.java.
+
+What it does
+------------------------------------------------------------
+- recursively scans the root folder
+- finds all instance files
+- skips format files
+- infers F1/F2/F3/F4/F5 from the path
+- loads the instance with InstanceLoader
+- runs each instance multiple times
+- writes CSV output
+
+How to configure
+------------------------------------------------------------
+Open BatchExperimentRunner.java and modify:
+
+- rootFolder
+- summaryCsvPath
+- detailsCsvPath
+
+Example
+------------------------------------------------------------
+String rootFolder = "/Users/yourname/IdeaProjects/Project1/src/test1/LRP_ALNS_Basline/LRPInstances";
+String summaryCsvPath = "/Users/yourname/IdeaProjects/Project1/summary.csv";
+String detailsCsvPath = "/Users/yourname/IdeaProjects/Project1/details.csv";
+
+Then run BatchExperimentRunner from IntelliJ IDEA.
+
+
+============================================================
+10. BATCH OUTPUT FILES
+============================================================
+
+Two CSV files are produced.
+
+10.1 summary.csv
+------------------------------------------------------------
+Each row corresponds to one instance.
+
+Typical columns include:
+- instance_type
+- instance_name
+- instance_path
+- runs
+- best_objective
+- best_penalized_objective
+- best_feasible
+- average_objective
+- average_penalized_objective
+- average_runtime_sec
+- average_feasible_rate
+
+Meaning of feasibility fields
+------------------------------------------------------------
+- best_feasible:
+  whether the best penalized solution was feasible
+- average_feasible_rate:
+  proportion of feasible runs among all repetitions
+
+10.2 details.csv
+------------------------------------------------------------
+Each row corresponds to one run of one instance.
+
+Typical columns include:
+- instance_type
+- instance_name
+- instance_path
+- run_id
+- seed
+- objective
+- penalized_objective
+- feasible
+- runtime_sec
+
+These files can be opened directly in Excel.
+
+
+============================================================
+11. TYPICAL WORKFLOW IN INTELLIJ IDEA
+============================================================
+
+Single instance
+------------------------------------------------------------
+1. Open Main.java
+2. Set instance type and path
+3. Run Main
+4. Inspect console output
+
+Batch experiments
+------------------------------------------------------------
+1. Place all benchmark files into the five instance folders
+2. Open BatchExperimentRunner.java
+3. Set rootFolder and CSV output paths
+4. Run BatchExperimentRunner
+5. Open summary.csv and details.csv in Excel
+
+Debugging an instance
+------------------------------------------------------------
+Recommended checks:
+- print distance mode
+- print objective and penalized objective
+- print feasible / infeasible
+- if infeasible, inspect missing customers and capacity violations
+
+
+
+

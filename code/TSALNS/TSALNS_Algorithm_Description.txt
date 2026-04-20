@@ -1,0 +1,456 @@
+README
+======
+
+
+1. Project overview
+-------------------
+
+The overall solution process is as follows:
+
+1) Read an instance file containing target nodes and candidate station nodes.
+2) Generate an initial station-opening plan using a greedy coverage-based procedure.
+3) Allocate each target node to a feasible opened station.
+4) Build an initial route plan for the drones at each opened station.
+5) Improve the station-opening plan by location neighborhood operators.
+6) For each candidate station plan, improve the routing plan by route-based local search and ALNS.
+7) Return the best feasible solution found.
+
+2. Environment and dependencies
+-------------------------------
+Programming language:
+- Java
+
+Required libraries:
+- No third-party libraries are required.
+- The implementation relies only on standard Java libraries such as:
+  - java.util
+  - java.io
+
+Recommended Java version:
+- Java 14 or above is recommended.
+- Reason: some classes in the project use modern Java syntax such as switch expressions.
+
+Development environments:
+- IntelliJ IDEA
+
+
+3. Expected project files
+-------------------------
+The project is organized around the following core classes:
+
+- Main.java
+- Node.java
+- Solution.java
+- FileReaderUtil.java
+- Init.java
+- LocationOperator.java
+- RoutingOperator.java
+- Check.java
+- ALNSSolver.java
+- Calculator.java
+
+If you later refactor the project, utility methods for route printing or cost reporting can be moved into separate helper classes, but the current logic is centered around the classes listed above.
+
+4. Input data and instance format
+---------------------------------
+The program reads node data from a text file.
+
+Current assumption in the code:
+- nodes with serviceEnergy > 0 are treated as target nodes;
+- nodes with serviceEnergy == 0 are treated as candidate station nodes.
+
+The reader expects each data row to contain at least:
+- node id
+- x coordinate
+- y coordinate
+- service energy
+- service time
+
+The current file-reading logic skips the first line as a header.
+
+5. Core algorithmic idea
+------------------------
+The algorithm has two tightly connected layers.
+
+5.1 Location layer
+------------------
+The location layer decides which candidate stations are opened and what type each station is:
+- 0: closed
+- 1: small station
+- 2: large station
+
+The initial location solution is built greedily by repeatedly opening the station that covers the largest number of currently uncovered target nodes.
+
+During improvement, location neighborhood operators modify the station-type vector. Only feasible station plans are kept, meaning every target must remain covered by at least one opened station.
+
+5.2 Routing layer
+-----------------
+After a feasible station plan is fixed, targets are allocated to nearby opened stations, and drone routes are generated.
+
+For large stations, the implementation assumes two drones:
+- one large drone
+- one small drone
+
+For small stations, only one small drone is used.
+
+The routing layer is improved by:
+- route-level local search operators such as swap and 2-opt;
+- ALNS destroy-and-repair operators.
+
+6. Main workflow in Main.java
+-----------------------------
+Main.java is the program entry point.
+
+Its responsibilities are:
+
+1) Define global parameters, including:
+   - coverage radii
+   - station operating-time limits
+   - drone battery capacities
+   - energy-consumption parameters
+   - drone speed
+   - station and drone costs
+   - metaheuristic parameters
+
+2) Read the instance file.
+
+3) Split all nodes into:
+   - target nodes
+   - candidate station nodes
+
+4) Generate an initial station plan.
+
+5) Allocate targets to stations.
+
+6) Generate initial routes.
+
+7) Evaluate the initial solution.
+
+8) Apply location-neighborhood search.
+
+9) For each feasible location solution:
+   - generate a new initial routing solution;
+   - apply route-level local search;
+   - call ALNSSolver for further routing improvement.
+
+10) Keep the best solution found and print the final result.
+
+Main.java should ideally remain an orchestration class. If the codebase is further cleaned up, long printing or reporting methods can be moved out of Main into helper classes.
+
+7. Description of each class
+----------------------------
+
+7.1 Node.java
+-------------
+Purpose:
+- Represents a node in the instance.
+
+Main fields:
+- nodeNo
+- X
+- Y
+- serviceEnergy
+- serviceTime
+
+Main role:
+- Stores the information of target nodes and candidate station nodes.
+- Provides getters and setters.
+- Uses nodeNo-based equality.
+
+7.2 Solution.java
+-----------------
+Purpose:
+- Stores a complete solution.
+
+Main contents:
+- nodeMatrix: the 4-dimensional route structure
+- stationTypes: the station-type array
+
+Main role:
+- Acts as a container for the current or best solution.
+- Useful for printing and passing solution data between modules.
+
+7.3 FileReaderUtil.java
+-----------------------
+Purpose:
+- Reads the input instance file.
+
+Main role:
+- Parses node data from a text file.
+- Builds a list of Node objects.
+
+Important note:
+- The current implementation assumes whitespace-separated fields.
+- The first line is treated as a header and skipped.
+
+7.4 Init.java
+-------------
+Purpose:
+- Builds the initial feasible solution.
+
+Main responsibilities:
+- Generate an initial station-opening plan.
+- Compute station coverage.
+- Assign targets to stations.
+- Generate initial drone routes.
+- Split targets between the large and small drone at a large station.
+- Construct routes greedily.
+
+Key methods:
+- stationSet(...)
+  Builds an initial mixed station plan using greedy coverage.
+- stationSet1(...)
+  Variant with only small stations.
+- stationSet2(...)
+  Variant with only large stations.
+- calculateCoverage(...)
+  Computes how many uncovered targets can be covered by each station.
+- allocateTargetsToStations(...)
+  Assigns each target to the nearest feasible opened station.
+- generateRoutes1(...)
+  Generates initial routes for all opened stations.
+- assignTargetsToDrones(...)
+  Ensures both drones at a large station receive tasks.
+- planDroneRoutes(...)
+  Builds a route greedily for one drone.
+- findClosestTarget(...)
+  Finds the nearest feasible next target under energy and time limits.
+
+7.5 LocationOperator.java
+-------------------------
+Purpose:
+- Provides neighborhood operators for the location layer.
+
+Main role:
+- Modifies the station-type vector during the outer location search.
+
+Typical operators:
+- randomSwapStationTypes(...)
+  Swap the types of two stations.
+- upgradeStationType(...)
+  Upgrade a station type.
+- downgradeStationType(...)
+  Downgrade a station type.
+- closeStation(...)
+  Close an opened station.
+- applyRandomNeighborhood(...)
+  Randomly select one neighborhood operator.
+- isFeasible(...)
+  Check whether all targets are covered by the current station plan.
+
+7.6 RoutingOperator.java
+------------------------
+Purpose:
+- Provides route-level local search, destroy operators, and repair operators.
+
+This is one of the largest and most important classes in the project.
+
+Main responsibilities:
+A) Route local search
+- swap1(...)
+  Swap two customers within the same subpath of one drone.
+- swap2(...)
+  Swap customers between different subpaths of the same drone.
+- swap3(...)
+  Swap customers between the large-drone and small-drone routes at the same large station.
+- swap4(...)
+  Swap customers between different stations.
+- twoOptOperator(...)
+  Improve route order by repeated 2-opt.
+
+B) Destroy operators
+- randomRemoveOnePoint(...)
+  Randomly remove one customer.
+- greedyRemoveMostExpensivePoint(...)
+  Remove the customer whose deletion gives the largest immediate cost saving.
+- probabilisticGreedyRemove(...)
+  Remove customers probabilistically among good candidates.
+- removeSimilarCustomers(...)
+  Remove customers based on a similarity score.
+
+C) Repair operators
+- greedyInsertMinCost(...)
+  Insert removed customers where the cost increase is smallest.
+- nearestInsertion(...)
+  Use nearest-insertion logic with feasibility checks.
+- minimumRegretInsertion(...)
+  Use regret-based insertion.
+- loadBalancingInsertion(...)
+  Insert customers while considering route balance.
+- prioritizedInsertion(...)
+  Prefer certain insertion opportunities, such as empty drones or low-cost new subpaths.
+
+D) Utility methods
+- deepCopyPaths(...)
+- isValidRoute(...)
+- findRemovedNodes(...)
+- extractAllNodes(...)
+- extractStartAndEndNodes(...)
+- reverseSubPath(...)
+- insertIntoRoute(...)
+- applyInsertion(...)
+- various internal helper classes such as InsertionPosition, RemovalPosition, and InsertionCandidate
+
+Important note:
+- Some repair operators may create a new subpath if insertion into existing routes is impossible.
+- Feasibility checks are applied after route modifications.
+
+7.7 Check.java
+--------------
+Purpose:
+- Provides solution evaluation and feasibility checking.
+
+Main responsibilities:
+A) Route and time evaluation
+- calculatePathTime(...)
+- calculatePathCost(...)
+- calculatePathLength(...)
+- calculateDroneTime(...)
+- calculateSolutionTime(...)
+- calculateLatestTime(...)
+
+B) Energy and battery checking
+- calculatePathEnergy(...)
+- checkPathEnergy(...)
+- checkEnergyConstraints(...)
+- checkStationPathsEnergy(...)
+- isOverallSolutionValid(...)
+
+C) Station-operation checking
+- checkStationOperation(...)
+- checkStationOperationLRP(...)
+
+D) Cost evaluation
+- calculateTotalCost(...)
+
+E) Utility/reporting
+- printRemainingBattery(...)
+- deepCopyRoute(...)
+
+This class is the main place for verifying whether a candidate solution satisfies energy and time constraints.
+
+7.8 ALNSSolver.java
+-------------------
+Purpose:
+- Runs the Adaptive Large Neighborhood Search for routing improvement.
+
+Main role:
+- Starting from an initial route solution, repeatedly destroy and repair the current solution and accept or reject candidate solutions according to a simulated-annealing-style acceptance rule.
+
+Main components:
+A) Temperature control
+- initialTemp
+- coolingRate
+- finalTemp
+
+B) Iteration control
+- maxIterations
+
+C) Adaptive operator management
+- destroyWeights / repairWeights
+- destroyScores / repairScores
+- destroyCounts / repairCounts
+- periodic weight updates
+
+D) Main solution loop
+- solve(...)
+
+E) Internal procedures
+- applyDestroyOperator(...)
+- applyRepairOperator(...)
+- acceptNewSolution(...)
+- selectOperator(...)
+- calculateTotalCost(...)
+- updateOperatorWeights(...)
+- updateAllWeights(...)
+- deepCopyPaths(...)
+- printAlnsStatsFull(...)
+
+Destroy operators currently used in ALNS:
+- greedy removal
+- probabilistic removal
+- random removal
+- similarity-based removal
+
+Repair operators currently used in ALNS:
+- nearest insertion
+- minimum regret insertion
+- load-balancing insertion
+- prioritized insertion
+
+Acceptance mechanism:
+- Always accept a better solution.
+- Accept a worse solution with a probability based on temperature.
+
+Operator adaptation:
+- Operator weights are updated according to recent performance.
+- Better or accepted moves receive larger rewards.
+
+7.9 Calculator.java
+-------------------
+Purpose:
+- Provides basic geometric and cost-related calculations.
+
+Current practical role:
+- The most important shared method is distance calculation.
+- It is used by many classes such as Check, Init, and RoutingOperator.
+
+Important note:
+- Even if the class name looks generic, it currently acts as a shared utility class.
+- If the project is refactored later, this class could be split into:
+  - GeometryUtils
+  - CostUtils
+
+8. Constraints handled by the code
+----------------------------------
+The implementation explicitly checks several types of constraints:
+
+1) Coverage constraint
+- Every target must be covered by at least one opened station.
+
+2) Station-type logic
+- Closed, small, and large stations have different meanings and capacities.
+
+3) Drone battery/energy constraint
+- Route energy consumption must not exceed battery capacity.
+
+4) Station operating-time constraint
+- The accumulated operating time of the drones at each station must stay within the station limit.
+
+5) Route feasibility after local search and ALNS
+- Modified routes are checked before being accepted.
+
+9. Output and solution interpretation
+-------------------------------------
+The program may print:
+- station configuration
+- target allocation results
+- route lists
+- cost values
+- feasibility information
+- ALNS operator statistics
+
+Important note about route output:
+- The raw internal solution structure may contain empty subpaths such as station-to-station paths with no customer in between.
+- These empty paths are kept intentionally because they simplify insertion and removal operations.
+- They do not imply an error and do not invalidate cost computation.
+- For presentation purposes, it is better to print only non-empty subpaths.
+
+10. How to run
+--------------
+Typical steps:
+
+1) Place the instance file in a known location.
+2) Update the file path in Main.java.
+3) Compile the project.
+4) Run Main.java.
+
+Example command-line workflow:
+- javac *.java
+- java Main
+
+If package declarations are used consistently, compile and run with the corresponding folder structure.
+
+
+
+
